@@ -1,0 +1,30 @@
+# Local-only notes and environment data
+LOCAL_*.md
+*.local
+.env
+.env.*
+!.env.example
+
+# Secrets and credentials
+*.secrets
+*.secret
+*.creds
+*.pem
+*.key
+
+# Logs and exports
+*.log
+*.out
+*.tmp
+*.bak
+
+# Editor and OS files
+.DS_Store
+.vscode/
+.idea/
+
+# Python / node cache patterns in case tooling is added later
+__pycache__/
+.pytest_cache/
+node_modules/
+

@@ -1,0 +1,649 @@
+#!/usr/bin/env bash
+
+# Copyright (c) 2021-2026 community-scripts ORG
+# Author: OpenAI Codex
+# License: MIT
+# https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
+#
+# Approaches considered for upstream submission:
+# - Pure Bash + systemd timer (implemented)
+# - upower-based polling (extra dependency)
+# - acpi-based parsing (extra dependency, weaker structure)
+# - udev/event-driven hooks (more brittle for v1)
+
+set -eEuo pipefail
+
+if command -v curl >/dev/null 2>&1; then
+  source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/api.func) 2>/dev/null || true
+  declare -f init_tool_telemetry >/dev/null 2>&1 && init_tool_telemetry "laptop-battery-shutdown" "pve"
+fi
+
+APP="PVE Laptop Battery Shutdown"
+CONFIG_PATH="/etc/default/pve-battery-monitor"
+CHECK_PATH="/usr/local/bin/pve-battery-monitor-check"
+MANAGER_PATH="/usr/local/bin/pve-battery-monitor-manage"
+UPDATE_WRAPPER_PATH="/usr/local/bin/update_pve_battery_monitor"
+UNINSTALL_WRAPPER_PATH="/usr/local/bin/uninstall_pve_battery_monitor"
+INSTALLER_STORE_DIR="/usr/local/lib/pve-battery-monitor"
+INSTALLER_STORE_PATH="${INSTALLER_STORE_DIR}/laptop-battery-shutdown.sh"
+UPSTREAM_SCRIPT_URL="https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/laptop-battery-shutdown.sh"
+STATE_DIR="/var/lib/pve-battery-monitor"
+STATE_PATH="${STATE_DIR}/state"
+SERVICE_PATH="/etc/systemd/system/pve-battery-monitor.service"
+TIMER_PATH="/etc/systemd/system/pve-battery-monitor.timer"
+
+header_info() {
+  if [[ -t 1 ]] && [[ -n "${TERM:-}" ]]; then
+    clear
+  fi
+  cat <<"EOF"
+    ____  _  ________    __            __  __             __
+   / __ \/ |/ / ____/   / /___ _____  / /_/ /_____  ____ / /_
+  / /_/ /    / __/_____/ / __ `/ __ \/ __/ __/ __ \/ __ `/ __/
+ / ____/ /|  / /__/_____/ / /_/ / /_/ / /_/ /_/ /_/ / /_/ / /_
+/_/   /_/ |_/_____/    /_/\__,_/ .___/\__/\__/\____/\__,_/\__/
+                              /_/
+EOF
+}
+
+msg() {
+  printf '%s\n' "$1"
+}
+
+ensure_root() {
+  if [[ ${EUID} -ne 0 ]]; then
+    echo "Run as root."
+    exit 1
+  fi
+}
+
+have_battery() {
+  compgen -G "/sys/class/power_supply/BAT*" >/dev/null
+}
+
+detect_battery() {
+  local battery=""
+  if [[ -f "$CONFIG_PATH" ]]; then
+    battery="$(awk -F= '/^BATTERY_DEVICE=/{gsub(/"/, "", $2); print $2}' "$CONFIG_PATH" 2>/dev/null || true)"
+  fi
+  if [[ -n "$battery" && -d "/sys/class/power_supply/$battery" ]]; then
+    printf '%s\n' "$battery"
+    return 0
+  fi
+  for path in /sys/class/power_supply/BAT*; do
+    [[ -d "$path" ]] || continue
+    basename "$path"
+    return 0
+  done
+  return 1
+}
+
+detect_ac_device() {
+  local ac=""
+  if [[ -f "$CONFIG_PATH" ]]; then
+    ac="$(awk -F= '/^AC_DEVICE=/{gsub(/"/, "", $2); print $2}' "$CONFIG_PATH" 2>/dev/null || true)"
+  fi
+  if [[ -n "$ac" && -f "/sys/class/power_supply/$ac/online" ]]; then
+    printf '%s\n' "$ac"
+    return 0
+  fi
+  if [[ -f /sys/class/power_supply/AC/online ]]; then
+    printf 'AC\n'
+    return 0
+  fi
+  for path in /sys/class/power_supply/*/online; do
+    [[ -f "$path" ]] || continue
+    basename "$(dirname "$path")"
+    return 0
+  done
+  return 1
+}
+
+detect_pve_major() {
+  local version major
+  version="$(pveversion 2>/dev/null | awk -F'/' 'NR==1 {print $2}' | awk -F'-' '{print $1}')"
+  major="${version%%.*}"
+  printf '%s\n' "${major:-0}"
+}
+
+write_config() {
+  if [[ -f "$CONFIG_PATH" ]]; then
+    return 0
+  fi
+  cat <<'EOF' >"$CONFIG_PATH"
+# Generic defaults only. Override devices if autodetection picks the wrong entry.
+BATTERY_DEVICE=""
+AC_DEVICE=""
+LOW_CAPACITY_PERCENT=10
+CHECK_INTERVAL_SECONDS=60
+DRY_RUN=0
+EOF
+  chmod 0644 "$CONFIG_PATH"
+}
+
+write_check_script() {
+  mkdir -p "$(dirname "$CHECK_PATH")" "$STATE_DIR"
+  cat <<'EOF' >"$CHECK_PATH"
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_PATH="/etc/default/pve-battery-monitor"
+STATE_DIR="/var/lib/pve-battery-monitor"
+STATE_PATH="${STATE_DIR}/state"
+LOG_TAG="pve-battery-monitor"
+
+mkdir -p "$STATE_DIR"
+
+BATTERY_DEVICE=""
+AC_DEVICE=""
+LOW_CAPACITY_PERCENT=10
+CHECK_INTERVAL_SECONDS=60
+DRY_RUN=0
+
+if [[ -f "$CONFIG_PATH" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_PATH"
+fi
+
+detect_battery() {
+  if [[ -n "${BATTERY_DEVICE}" && -d "/sys/class/power_supply/${BATTERY_DEVICE}" ]]; then
+    printf '%s\n' "$BATTERY_DEVICE"
+    return 0
+  fi
+  for path in /sys/class/power_supply/BAT*; do
+    [[ -d "$path" ]] || continue
+    basename "$path"
+    return 0
+  done
+  return 1
+}
+
+detect_ac_device() {
+  if [[ -n "${AC_DEVICE}" && -f "/sys/class/power_supply/${AC_DEVICE}/online" ]]; then
+    printf '%s\n' "$AC_DEVICE"
+    return 0
+  fi
+  if [[ -f /sys/class/power_supply/AC/online ]]; then
+    printf 'AC\n'
+    return 0
+  fi
+  for path in /sys/class/power_supply/*/online; do
+    [[ -f "$path" ]] || continue
+    basename "$(dirname "$path")"
+    return 0
+  done
+  return 1
+}
+
+read_uevent_value() {
+  local uevent_path="$1"
+  local key="$2"
+  awk -F= -v search="$key" '$1 == search {sub(/^[^=]*=/, "", $0); print $0; exit}' "$uevent_path"
+}
+
+emit_status() {
+  local result="$1"
+  local action="$2"
+  local battery="$3"
+  local ac="$4"
+  local capacity="$5"
+  local status="$6"
+  local armed="$7"
+  local eta="$8"
+  local detail="$9"
+  printf 'result=%s action=%s battery=%s ac=%s capacity=%s status=%s armed=%s eta=%s detail=%s\n' \
+    "$result" "$action" "$battery" "$ac" "$capacity" "$status" "$armed" "$eta" "$detail"
+}
+
+clear_state() {
+  rm -f "$STATE_PATH"
+}
+
+format_eta() {
+  local total_seconds="$1"
+  local hours minutes
+
+  if [[ ! "$total_seconds" =~ ^[0-9]+$ ]]; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  hours=$((total_seconds / 3600))
+  minutes=$(((total_seconds % 3600) / 60))
+  printf '%02dh%02dm\n' "$hours" "$minutes"
+}
+
+estimate_eta_to_shutdown() {
+  local ac_online="$1"
+  local energy_now="$2"
+  local energy_full="$3"
+  local power_now="$4"
+  local threshold_percent="$5"
+  local last_energy_now="$6"
+  local last_timestamp="$7"
+  local last_ac_online="$8"
+  local current_timestamp="$9"
+  local shutdown_energy remaining_energy delta_energy delta_time eta_seconds
+
+  if [[ "$ac_online" != "0" ]]; then
+    printf 'on-ac\n'
+    return 0
+  fi
+
+  for value in "$energy_now" "$energy_full" "$threshold_percent"; do
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+      printf 'unknown\n'
+      return 0
+    fi
+  done
+
+  shutdown_energy=$((energy_full * threshold_percent / 100))
+  remaining_energy=$((energy_now - shutdown_energy))
+  if (( remaining_energy <= 0 )); then
+    printf 'shutdown-now\n'
+    return 0
+  fi
+
+  if [[ "$power_now" =~ ^[0-9]+$ ]] && (( power_now > 0 )); then
+    eta_seconds=$((remaining_energy * 3600 / power_now))
+    format_eta "$eta_seconds"
+    return 0
+  fi
+
+  if [[ "$last_ac_online" == "0" ]] &&
+     [[ "$last_energy_now" =~ ^[0-9]+$ ]] &&
+     [[ "$last_timestamp" =~ ^[0-9]+$ ]] &&
+     [[ "$current_timestamp" =~ ^[0-9]+$ ]] &&
+     (( current_timestamp > last_timestamp )) &&
+     (( last_energy_now > energy_now )); then
+    delta_energy=$((last_energy_now - energy_now))
+    delta_time=$((current_timestamp - last_timestamp))
+    if (( delta_energy > 0 && delta_time > 0 )); then
+      eta_seconds=$((remaining_energy * delta_time / delta_energy))
+      format_eta "$eta_seconds"
+      return 0
+    fi
+  fi
+
+  printf 'unknown\n'
+}
+
+save_state() {
+  local armed="$1"
+  local battery="$2"
+  local ac="$3"
+  local capacity="$4"
+  local energy="$5"
+  local timestamp="$6"
+  local ac_online="$7"
+  cat <<STATE >"$STATE_PATH"
+ARMED=${armed}
+STATE_BATTERY_DEVICE="${battery}"
+STATE_AC_DEVICE="${ac}"
+LAST_CAPACITY="${capacity}"
+LAST_ENERGY_NOW="${energy}"
+LAST_TIMESTAMP="${timestamp}"
+LAST_AC_ONLINE="${ac_online}"
+STATE
+}
+
+if ! battery="$(detect_battery)"; then
+  emit_status "skip" "clear-state" "missing" "unknown" "unknown" "unknown" "0" "unknown" "no-battery-device"
+  logger -t "$LOG_TAG" "No battery device found; clearing state"
+  clear_state
+  exit 0
+fi
+
+if ! ac_device="$(detect_ac_device)"; then
+  emit_status "skip" "clear-state" "$battery" "missing" "unknown" "unknown" "0" "unknown" "no-ac-online-device"
+  logger -t "$LOG_TAG" "No AC online device found; clearing state"
+  clear_state
+  exit 0
+fi
+
+uevent="/sys/class/power_supply/${battery}/uevent"
+if [[ ! -f "$uevent" ]]; then
+  emit_status "skip" "clear-state" "$battery" "$ac_device" "unknown" "unknown" "0" "unknown" "missing-uevent"
+  logger -t "$LOG_TAG" "Battery uevent file missing for ${battery}; clearing state"
+  clear_state
+  exit 0
+fi
+
+capacity="$(read_uevent_value "$uevent" "POWER_SUPPLY_CAPACITY")"
+energy_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_ENERGY_NOW")"
+if [[ -z "$energy_now" ]]; then
+  energy_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_CHARGE_NOW")"
+fi
+energy_now="${energy_now:-0}"
+energy_full="$(read_uevent_value "$uevent" "POWER_SUPPLY_ENERGY_FULL")"
+if [[ -z "$energy_full" ]]; then
+  energy_full="$(read_uevent_value "$uevent" "POWER_SUPPLY_CHARGE_FULL")"
+fi
+energy_full="${energy_full:-0}"
+power_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_POWER_NOW")"
+if [[ -z "$power_now" ]]; then
+  power_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_CURRENT_NOW")"
+fi
+power_now="${power_now:-0}"
+status="$(read_uevent_value "$uevent" "POWER_SUPPLY_STATUS")"
+status="${status:-unknown}"
+ac_online="$(cat "/sys/class/power_supply/${ac_device}/online" 2>/dev/null || echo 1)"
+current_timestamp="$(date +%s)"
+
+if [[ -z "$capacity" ]]; then
+  emit_status "skip" "clear-state" "$battery" "$ac_device" "unknown" "$status" "0" "unknown" "missing-capacity"
+  logger -t "$LOG_TAG" "Battery capacity unavailable for ${battery}; clearing state"
+  clear_state
+  exit 0
+fi
+
+ARMED=0
+LAST_CAPACITY=-1
+LAST_ENERGY_NOW=-1
+LAST_TIMESTAMP=0
+LAST_AC_ONLINE=-1
+if [[ -f "$STATE_PATH" ]]; then
+  # shellcheck disable=SC1090
+  source "$STATE_PATH"
+fi
+
+eta_to_shutdown="$(estimate_eta_to_shutdown \
+  "$ac_online" \
+  "$energy_now" \
+  "$energy_full" \
+  "$power_now" \
+  "$LOW_CAPACITY_PERCENT" \
+  "$LAST_ENERGY_NOW" \
+  "$LAST_TIMESTAMP" \
+  "$LAST_AC_ONLINE" \
+  "$current_timestamp")"
+
+if [[ "$ac_online" != "0" ]]; then
+  emit_status "ok" "none" "$battery" "$ac_device:online" "${capacity}%" "$status" "0" "$eta_to_shutdown" "external-power-present"
+  if (( ARMED == 1 )); then
+    logger -t "$LOG_TAG" "AC power restored on ${ac_device}; clearing low-battery armed state"
+  fi
+  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$current_timestamp" "$ac_online"
+  exit 0
+fi
+
+if (( capacity > LOW_CAPACITY_PERCENT )); then
+  emit_status "ok" "none" "$battery" "$ac_device:offline" "${capacity}%" "$status" "0" "$eta_to_shutdown" "above-threshold"
+  if (( ARMED == 1 )); then
+    logger -t "$LOG_TAG" "Battery recovered above threshold (${capacity}% > ${LOW_CAPACITY_PERCENT}%); clearing armed state"
+  fi
+  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$current_timestamp" "$ac_online"
+  exit 0
+fi
+
+if (( ARMED != 1 )); then
+  emit_status "warn" "arm" "$battery" "$ac_device:offline" "${capacity}%" "$status" "1" "$eta_to_shutdown" "first-low-sample"
+  logger -t "$LOG_TAG" "Battery low and on battery power (${capacity}%, status=${status}); arming shutdown check"
+  save_state "1" "$battery" "$ac_device" "$capacity" "$energy_now" "$current_timestamp" "$ac_online"
+  exit 0
+fi
+
+if (( capacity > LAST_CAPACITY )); then
+  emit_status "ok" "clear-state" "$battery" "$ac_device:offline" "${capacity}%" "$status" "0" "$eta_to_shutdown" "capacity-increased"
+  logger -t "$LOG_TAG" "Battery capacity increased (${LAST_CAPACITY}% -> ${capacity}%); clearing armed state"
+  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$current_timestamp" "$ac_online"
+  exit 0
+fi
+
+if [[ "$energy_now" =~ ^[0-9]+$ ]] && [[ "$LAST_ENERGY_NOW" =~ ^[0-9]+$ ]] && (( energy_now > LAST_ENERGY_NOW )); then
+  emit_status "ok" "clear-state" "$battery" "$ac_device:offline" "${capacity}%" "$status" "0" "$eta_to_shutdown" "energy-increased"
+  logger -t "$LOG_TAG" "Battery energy increased (${LAST_ENERGY_NOW} -> ${energy_now}); clearing armed state"
+  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$current_timestamp" "$ac_online"
+  exit 0
+fi
+
+if [[ "${DRY_RUN}" == "1" ]]; then
+  emit_status "crit" "dry-run-shutdown" "$battery" "$ac_device:offline" "${capacity}%" "$status" "1" "shutdown-now" "persistent-low-battery"
+else
+  emit_status "crit" "shutdown" "$battery" "$ac_device:offline" "${capacity}%" "$status" "1" "shutdown-now" "persistent-low-battery"
+fi
+logger -t "$LOG_TAG" "Battery low persisted (${capacity}%, status=${status}, ac=${ac_device}); initiating shutdown"
+clear_state
+
+if [[ "${DRY_RUN}" == "1" ]]; then
+  logger -t "$LOG_TAG" "DRY_RUN=1 set; shutdown command skipped"
+  exit 0
+fi
+
+shutdown -h now "Low battery on Proxmox host"
+EOF
+  chmod 0755 "$CHECK_PATH"
+}
+
+write_installed_script_copy() {
+  local source_path=""
+  source_path="$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true)"
+  mkdir -p "$INSTALLER_STORE_DIR"
+  if [[ -n "$source_path" && -f "$source_path" ]]; then
+    cp "$source_path" "$INSTALLER_STORE_PATH"
+    chmod 0755 "$INSTALLER_STORE_PATH"
+  fi
+}
+
+write_management_wrappers() {
+  cat <<EOF >"$MANAGER_PATH"
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOCAL_SCRIPT="${INSTALLER_STORE_PATH}"
+UPSTREAM_SCRIPT_URL="${UPSTREAM_SCRIPT_URL}"
+
+if [[ -x "\$LOCAL_SCRIPT" ]]; then
+  exec "\$LOCAL_SCRIPT" "\$@"
+fi
+
+if command -v curl >/dev/null 2>&1; then
+  exec bash -c "\$(curl -fsSL \"\$UPSTREAM_SCRIPT_URL\")" bash "\$@"
+fi
+
+echo "No local management script found and curl is unavailable."
+exit 1
+EOF
+  chmod 0755 "$MANAGER_PATH"
+
+  cat <<EOF >"$UPDATE_WRAPPER_PATH"
+#!/usr/bin/env bash
+exec "${MANAGER_PATH}" update "\$@"
+EOF
+  chmod 0755 "$UPDATE_WRAPPER_PATH"
+
+  cat <<EOF >"$UNINSTALL_WRAPPER_PATH"
+#!/usr/bin/env bash
+exec "${MANAGER_PATH}" remove "\$@"
+EOF
+  chmod 0755 "$UNINSTALL_WRAPPER_PATH"
+}
+
+write_units() {
+  local interval=60
+  if [[ -f "$CONFIG_PATH" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_PATH"
+    if [[ "${CHECK_INTERVAL_SECONDS:-}" =~ ^[0-9]+$ ]] && (( CHECK_INTERVAL_SECONDS > 0 )); then
+      interval="$CHECK_INTERVAL_SECONDS"
+    fi
+  fi
+
+  cat <<EOF >"$SERVICE_PATH"
+[Unit]
+Description=Check Proxmox host battery level and shut down on persistent low battery
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=${CHECK_PATH}
+EOF
+
+  cat <<EOF >"$TIMER_PATH"
+[Unit]
+Description=Run Proxmox host battery monitor every minute
+
+[Timer]
+OnBootSec=${interval}s
+OnUnitActiveSec=${interval}s
+Persistent=true
+Unit=pve-battery-monitor.service
+
+[Install]
+WantedBy=timers.target
+EOF
+}
+
+validate_environment() {
+  local pve_major
+
+  ensure_root
+  header_info
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "systemd is required."
+    exit 1
+  fi
+
+  if ! command -v pveversion >/dev/null 2>&1; then
+    echo "This host does not look like Proxmox VE."
+    exit 1
+  fi
+
+  pve_major="$(detect_pve_major)"
+  if [[ ! "$pve_major" =~ ^[0-9]+$ ]] || (( pve_major < 8 )); then
+    echo "Proxmox VE 8 or newer is required."
+    exit 1
+  fi
+
+  if ! have_battery; then
+    echo "No battery device found under /sys/class/power_supply/BAT*."
+    exit 1
+  fi
+}
+
+deploy_monitor() {
+  local action_label="$1"
+  local battery="$2"
+  local ac_device="$3"
+
+  write_config
+  write_installed_script_copy
+  write_management_wrappers
+  write_check_script
+  write_units
+
+  systemctl daemon-reload
+  systemctl enable -q --now pve-battery-monitor.timer
+  systemctl start pve-battery-monitor.service
+
+  msg ""
+  msg "${action_label} ${APP}"
+  msg "Detected battery: ${battery:-unknown}"
+  msg "Detected AC source: ${ac_device:-unknown}"
+  msg "Config: ${CONFIG_PATH}"
+  msg "Check script: ${CHECK_PATH}"
+  msg "Manager script: ${MANAGER_PATH}"
+  msg "Update wrapper: ${UPDATE_WRAPPER_PATH}"
+  msg "Uninstall wrapper: ${UNINSTALL_WRAPPER_PATH}"
+  msg "Timer: pve-battery-monitor.timer"
+  msg ""
+  msg "Set DRY_RUN=1 in ${CONFIG_PATH} before testing on production hardware."
+}
+
+install_monitor() {
+  local battery ac_device
+  validate_environment
+  battery="$(detect_battery || true)"
+  ac_device="$(detect_ac_device || true)"
+  deploy_monitor "Installed" "$battery" "$ac_device"
+}
+
+update_monitor() {
+  local battery ac_device
+  validate_environment
+  battery="$(detect_battery || true)"
+  ac_device="$(detect_ac_device || true)"
+  deploy_monitor "Updated" "$battery" "$ac_device"
+}
+
+remove_monitor() {
+  ensure_root
+  header_info
+  systemctl disable -q --now pve-battery-monitor.timer pve-battery-monitor.service 2>/dev/null || true
+  rm -f "$SERVICE_PATH" "$TIMER_PATH" "$CHECK_PATH" "$MANAGER_PATH" "$UPDATE_WRAPPER_PATH" "$UNINSTALL_WRAPPER_PATH"
+  rm -rf "$STATE_DIR" "$INSTALLER_STORE_DIR"
+  systemctl daemon-reload
+  msg "Removed ${APP}"
+  msg "Config left in place at ${CONFIG_PATH}"
+}
+
+status_monitor() {
+  local battery="" ac_device="" state="disarmed" capacity="unknown" ac_online="unknown"
+  ensure_root
+  header_info
+  battery="$(detect_battery || true)"
+  ac_device="$(detect_ac_device || true)"
+
+  if [[ -n "$battery" && -f "/sys/class/power_supply/${battery}/uevent" ]]; then
+    capacity="$(awk -F= '/^POWER_SUPPLY_CAPACITY=/{print $2}' "/sys/class/power_supply/${battery}/uevent" 2>/dev/null || echo unknown)"
+  fi
+  if [[ -n "$ac_device" && -f "/sys/class/power_supply/${ac_device}/online" ]]; then
+    ac_online="$(cat "/sys/class/power_supply/${ac_device}/online" 2>/dev/null || echo unknown)"
+  fi
+  if [[ -f "$STATE_PATH" ]]; then
+    # shellcheck disable=SC1090
+    source "$STATE_PATH"
+    if [[ "${ARMED:-0}" == "1" ]]; then
+      state="armed"
+    fi
+  fi
+
+  msg "Application: ${APP}"
+  msg "Battery: ${battery:-not found}"
+  msg "AC source: ${ac_device:-not found}"
+  msg "Capacity: ${capacity}"
+  msg "AC online: ${ac_online}"
+  msg "State: ${state}"
+  msg ""
+  systemctl --no-pager --full status pve-battery-monitor.timer pve-battery-monitor.service || true
+}
+
+choose_action() {
+  if command -v whiptail >/dev/null 2>&1; then
+    whiptail --backtitle "Proxmox VE Helper Scripts" --title "$APP" --menu "Select an option:" 13 62 4 \
+      Install "Install battery shutdown monitor" \
+      Update "Refresh installed monitor and wrappers" \
+      Remove "Remove battery shutdown monitor" \
+      Status "Show current monitor status" 3>&1 1>&2 2>&3 || true
+    return 0
+  fi
+
+  printf 'Select an option [Install/Update/Remove/Status]: '
+  read -r answer
+  printf '%s\n' "$answer"
+}
+
+main() {
+  local action
+  case "${1:-}" in
+    install|Install) action="Install" ;;
+    update|Update) action="Update" ;;
+    remove|Remove|uninstall|Uninstall) action="Remove" ;;
+    status|Status) action="Status" ;;
+    "") action="$(choose_action)" ;;
+    *)
+      echo "Usage: $0 [install|update|remove|status]"
+      exit 1
+      ;;
+  esac
+  case "$action" in
+    Install) install_monitor ;;
+    Update) update_monitor ;;
+    Remove) remove_monitor ;;
+    Status) status_monitor ;;
+    *) echo "Exiting."; exit 0 ;;
+  esac
+}
+
+main "$@"

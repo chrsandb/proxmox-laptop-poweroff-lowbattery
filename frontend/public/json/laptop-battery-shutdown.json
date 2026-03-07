@@ -1,0 +1,44 @@
+{
+  "name": "PVE Laptop Battery Shutdown",
+  "slug": "laptop-battery-shutdown",
+  "categories": [
+    1
+  ],
+  "date_created": "2026-03-07",
+  "type": "pve",
+  "updateable": false,
+  "privileged": false,
+  "interface_port": null,
+  "documentation": null,
+  "website": null,
+  "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/proxmox.webp",
+  "config_path": "/etc/default/pve-battery-monitor",
+  "description": "Installs a host-side battery monitor for Proxmox VE running on laptop hardware. The generated systemd timer checks battery state from /sys/class/power_supply and performs a graceful host shutdown when battery power remains below the configured threshold while AC power is offline.",
+  "install_methods": [
+    {
+      "type": "default",
+      "script": "tools/pve/laptop-battery-shutdown.sh",
+      "resources": {
+        "cpu": null,
+        "ram": null,
+        "hdd": null,
+        "os": null,
+        "version": null
+      }
+    }
+  ],
+  "default_credentials": {
+    "username": null,
+    "password": null
+  },
+  "notes": [
+    {
+      "text": "Execute within the Proxmox shell.",
+      "type": "info"
+    },
+    {
+      "text": "Set `DRY_RUN=1` in `/etc/default/pve-battery-monitor` before validating behavior on a production host.",
+      "type": "warning"
+    }
+  ]
+}
