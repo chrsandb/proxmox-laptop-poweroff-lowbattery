@@ -9,7 +9,7 @@
   "updateable": false,
   "privileged": false,
   "interface_port": null,
-  "documentation": null,
+  "documentation": "https://github.com/chrsandb/proxmox-laptop-poweroff-lowbattery/blob/main/README.md",
   "website": null,
   "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/proxmox.webp",
   "config_path": "/etc/default/pve-battery-monitor",
@@ -39,6 +39,14 @@
     {
       "text": "Set `DRY_RUN=1` in `/etc/default/pve-battery-monitor` before validating behavior on a production host.",
       "type": "warning"
+    },
+    {
+      "text": "A `10%` threshold may be acceptable for a healthy new battery, but `25%` or higher is often safer for older batteries or batteries with unstable low-end reporting.",
+      "type": "warning"
+    },
+    {
+      "text": "For unattended recovery after shutdown, enable BIOS/UEFI auto power-on on AC restore or a scheduled RTC wake/power-on alarm.",
+      "type": "info"
     }
   ]
 }
