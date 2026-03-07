@@ -215,53 +215,101 @@ format_eta() {
 
 estimate_eta_to_shutdown() {
   local ac_online="$1"
-  local energy_now="$2"
-  local energy_full="$3"
-  local power_now="$4"
-  local threshold_percent="$5"
-  local last_energy_now="$6"
-  local last_timestamp="$7"
-  local last_ac_online="$8"
-  local current_timestamp="$9"
-  local shutdown_energy remaining_energy delta_energy delta_time eta_seconds
+  local threshold_percent="$2"
+  local energy_now="$3"
+  local energy_full="$4"
+  local power_now="$5"
+  local charge_now="$6"
+  local charge_full="$7"
+  local current_now="$8"
+  local voltage_now="$9"
+  local last_energy_now="${10}"
+  local last_charge_now="${11}"
+  local last_timestamp="${12}"
+  local last_ac_online="${13}"
+  local current_timestamp="${14}"
+  local shutdown_level remaining_level delta_value delta_time eta_seconds discharge_rate mode
 
   if [[ "$ac_online" != "0" ]]; then
     printf 'on-ac\n'
     return 0
   fi
 
-  for value in "$energy_now" "$energy_full" "$threshold_percent"; do
-    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-      printf 'unknown\n'
-      return 0
-    fi
-  done
+  if [[ ! "$threshold_percent" =~ ^[0-9]+$ ]]; then
+    printf 'unknown\n'
+    return 0
+  fi
 
-  shutdown_energy=$((energy_full * threshold_percent / 100))
-  remaining_energy=$((energy_now - shutdown_energy))
-  if (( remaining_energy <= 0 )); then
+  mode=""
+  if [[ "$energy_now" =~ ^[0-9]+$ ]] && [[ "$energy_full" =~ ^[0-9]+$ ]] && (( energy_full > 0 )); then
+    mode="energy"
+    shutdown_level=$((energy_full * threshold_percent / 100))
+    remaining_level=$((energy_now - shutdown_level))
+  elif [[ "$charge_now" =~ ^[0-9]+$ ]] && [[ "$charge_full" =~ ^[0-9]+$ ]] && (( charge_full > 0 )); then
+    mode="charge"
+    shutdown_level=$((charge_full * threshold_percent / 100))
+    remaining_level=$((charge_now - shutdown_level))
+  else
+    printf 'unknown\n'
+    return 0
+  fi
+
+  if (( remaining_level <= 0 )); then
     printf 'shutdown-now\n'
     return 0
   fi
 
-  if [[ "$power_now" =~ ^[0-9]+$ ]] && (( power_now > 0 )); then
-    eta_seconds=$((remaining_energy * 3600 / power_now))
-    format_eta "$eta_seconds"
-    return 0
-  fi
+  if [[ "$mode" == "energy" ]]; then
+    discharge_rate=0
+    if [[ "$power_now" =~ ^[0-9]+$ ]] && (( power_now > 0 )); then
+      discharge_rate=$power_now
+    elif [[ "$current_now" =~ ^[0-9]+$ ]] && [[ "$voltage_now" =~ ^[0-9]+$ ]] && (( current_now > 0 && voltage_now > 0 )); then
+      # uA * uV / 1_000_000 = uW
+      discharge_rate=$((current_now * voltage_now / 1000000))
+    fi
 
-  if [[ "$last_ac_online" == "0" ]] &&
-     [[ "$last_energy_now" =~ ^[0-9]+$ ]] &&
-     [[ "$last_timestamp" =~ ^[0-9]+$ ]] &&
-     [[ "$current_timestamp" =~ ^[0-9]+$ ]] &&
-     (( current_timestamp > last_timestamp )) &&
-     (( last_energy_now > energy_now )); then
-    delta_energy=$((last_energy_now - energy_now))
-    delta_time=$((current_timestamp - last_timestamp))
-    if (( delta_energy > 0 && delta_time > 0 )); then
-      eta_seconds=$((remaining_energy * delta_time / delta_energy))
+    if (( discharge_rate > 0 )); then
+      eta_seconds=$((remaining_level * 3600 / discharge_rate))
       format_eta "$eta_seconds"
       return 0
+    fi
+
+    if [[ "$last_ac_online" == "0" ]] &&
+       [[ "$last_energy_now" =~ ^[0-9]+$ ]] &&
+       [[ "$last_timestamp" =~ ^[0-9]+$ ]] &&
+       [[ "$current_timestamp" =~ ^[0-9]+$ ]] &&
+       (( current_timestamp > last_timestamp )) &&
+       (( last_energy_now > energy_now )); then
+      delta_value=$((last_energy_now - energy_now))
+      delta_time=$((current_timestamp - last_timestamp))
+      if (( delta_value > 0 && delta_time > 0 )); then
+        eta_seconds=$((remaining_level * delta_time / delta_value))
+        format_eta "$eta_seconds"
+        return 0
+      fi
+    fi
+  fi
+
+  if [[ "$mode" == "charge" ]]; then
+    if [[ "$current_now" =~ ^[0-9]+$ ]] && (( current_now > 0 )); then
+      eta_seconds=$((remaining_level * 3600 / current_now))
+      format_eta "$eta_seconds"
+      return 0
+    fi
+
+    if [[ "$last_ac_online" == "0" ]] &&
+       [[ "$last_charge_now" =~ ^[0-9]+$ ]] &&
+       [[ "$last_timestamp" =~ ^[0-9]+$ ]] &&
+       [[ "$current_timestamp" =~ ^[0-9]+$ ]] &&
+       (( current_timestamp > last_timestamp )) &&
+       (( last_charge_now > charge_now )); then
+      delta_value=$((last_charge_now - charge_now))
+      delta_time=$((current_timestamp - last_timestamp))
+      if (( delta_value > 0 && delta_time > 0 )); then
+        eta_seconds=$((remaining_level * delta_time / delta_value))
+        format_eta "$eta_seconds"
+        return 0
+      fi
     fi
   fi
 
@@ -274,14 +322,16 @@ save_state() {
   local ac="$3"
   local capacity="$4"
   local energy="$5"
-  local timestamp="$6"
-  local ac_online="$7"
+  local charge="$6"
+  local timestamp="$7"
+  local ac_online="$8"
   cat <<STATE >"$STATE_PATH"
 ARMED=${armed}
 STATE_BATTERY_DEVICE="${battery}"
 STATE_AC_DEVICE="${ac}"
 LAST_CAPACITY="${capacity}"
 LAST_ENERGY_NOW="${energy}"
+LAST_CHARGE_NOW="${charge}"
 LAST_TIMESTAMP="${timestamp}"
 LAST_AC_ONLINE="${ac_online}"
 STATE
@@ -311,27 +361,27 @@ fi
 
 capacity="$(read_uevent_value "$uevent" "POWER_SUPPLY_CAPACITY")"
 energy_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_ENERGY_NOW")"
-if [[ -z "$energy_now" ]]; then
-  energy_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_CHARGE_NOW")"
-fi
 energy_now="${energy_now:-0}"
+charge_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_CHARGE_NOW")"
+charge_now="${charge_now:-0}"
 energy_full="$(read_uevent_value "$uevent" "POWER_SUPPLY_ENERGY_FULL")"
-if [[ -z "$energy_full" ]]; then
-  energy_full="$(read_uevent_value "$uevent" "POWER_SUPPLY_CHARGE_FULL")"
-fi
 energy_full="${energy_full:-0}"
+charge_full="$(read_uevent_value "$uevent" "POWER_SUPPLY_CHARGE_FULL")"
+charge_full="${charge_full:-0}"
 power_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_POWER_NOW")"
-if [[ -z "$power_now" ]]; then
-  power_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_CURRENT_NOW")"
-fi
 power_now="${power_now:-0}"
+current_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_CURRENT_NOW")"
+current_now="${current_now:-0}"
+voltage_now="$(read_uevent_value "$uevent" "POWER_SUPPLY_VOLTAGE_NOW")"
+voltage_now="${voltage_now:-0}"
 status="$(read_uevent_value "$uevent" "POWER_SUPPLY_STATUS")"
 status="${status:-unknown}"
+status_log="${status// /_}"
 ac_online="$(cat "/sys/class/power_supply/${ac_device}/online" 2>/dev/null || echo 1)"
 current_timestamp="$(date +%s)"
 
 if [[ -z "$capacity" ]]; then
-  emit_status "skip" "clear-state" "$battery" "$ac_device" "unknown" "$status" "0" "unknown" "missing-capacity"
+  emit_status "skip" "clear-state" "$battery" "$ac_device" "unknown" "$status_log" "0" "unknown" "missing-capacity"
   logger -t "$LOG_TAG" "Battery capacity unavailable for ${battery}; clearing state"
   clear_state
   exit 0
@@ -340,6 +390,7 @@ fi
 ARMED=0
 LAST_CAPACITY=-1
 LAST_ENERGY_NOW=-1
+LAST_CHARGE_NOW=-1
 LAST_TIMESTAMP=0
 LAST_AC_ONLINE=-1
 if [[ -f "$STATE_PATH" ]]; then
@@ -349,58 +400,63 @@ fi
 
 eta_to_shutdown="$(estimate_eta_to_shutdown \
   "$ac_online" \
+  "$LOW_CAPACITY_PERCENT" \
   "$energy_now" \
   "$energy_full" \
   "$power_now" \
-  "$LOW_CAPACITY_PERCENT" \
+  "$charge_now" \
+  "$charge_full" \
+  "$current_now" \
+  "$voltage_now" \
   "$LAST_ENERGY_NOW" \
+  "$LAST_CHARGE_NOW" \
   "$LAST_TIMESTAMP" \
   "$LAST_AC_ONLINE" \
   "$current_timestamp")"
 
 if [[ "$ac_online" != "0" ]]; then
-  emit_status "ok" "none" "$battery" "$ac_device:online" "${capacity}%" "$status" "0" "$eta_to_shutdown" "external-power-present"
+  emit_status "ok" "none" "$battery" "$ac_device:online" "${capacity}%" "$status_log" "0" "$eta_to_shutdown" "external-power-present"
   if (( ARMED == 1 )); then
     logger -t "$LOG_TAG" "AC power restored on ${ac_device}; clearing low-battery armed state"
   fi
-  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$current_timestamp" "$ac_online"
+  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$charge_now" "$current_timestamp" "$ac_online"
   exit 0
 fi
 
 if (( capacity > LOW_CAPACITY_PERCENT )); then
-  emit_status "ok" "none" "$battery" "$ac_device:offline" "${capacity}%" "$status" "0" "$eta_to_shutdown" "above-threshold"
+  emit_status "ok" "none" "$battery" "$ac_device:offline" "${capacity}%" "$status_log" "0" "$eta_to_shutdown" "above-threshold"
   if (( ARMED == 1 )); then
     logger -t "$LOG_TAG" "Battery recovered above threshold (${capacity}% > ${LOW_CAPACITY_PERCENT}%); clearing armed state"
   fi
-  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$current_timestamp" "$ac_online"
+  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$charge_now" "$current_timestamp" "$ac_online"
   exit 0
 fi
 
 if (( ARMED != 1 )); then
-  emit_status "warn" "arm" "$battery" "$ac_device:offline" "${capacity}%" "$status" "1" "$eta_to_shutdown" "first-low-sample"
+  emit_status "warn" "arm" "$battery" "$ac_device:offline" "${capacity}%" "$status_log" "1" "$eta_to_shutdown" "first-low-sample"
   logger -t "$LOG_TAG" "Battery low and on battery power (${capacity}%, status=${status}); arming shutdown check"
-  save_state "1" "$battery" "$ac_device" "$capacity" "$energy_now" "$current_timestamp" "$ac_online"
+  save_state "1" "$battery" "$ac_device" "$capacity" "$energy_now" "$charge_now" "$current_timestamp" "$ac_online"
   exit 0
 fi
 
 if (( capacity > LAST_CAPACITY )); then
-  emit_status "ok" "clear-state" "$battery" "$ac_device:offline" "${capacity}%" "$status" "0" "$eta_to_shutdown" "capacity-increased"
+  emit_status "ok" "clear-state" "$battery" "$ac_device:offline" "${capacity}%" "$status_log" "0" "$eta_to_shutdown" "capacity-increased"
   logger -t "$LOG_TAG" "Battery capacity increased (${LAST_CAPACITY}% -> ${capacity}%); clearing armed state"
-  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$current_timestamp" "$ac_online"
+  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$charge_now" "$current_timestamp" "$ac_online"
   exit 0
 fi
 
 if [[ "$energy_now" =~ ^[0-9]+$ ]] && [[ "$LAST_ENERGY_NOW" =~ ^[0-9]+$ ]] && (( energy_now > LAST_ENERGY_NOW )); then
-  emit_status "ok" "clear-state" "$battery" "$ac_device:offline" "${capacity}%" "$status" "0" "$eta_to_shutdown" "energy-increased"
+  emit_status "ok" "clear-state" "$battery" "$ac_device:offline" "${capacity}%" "$status_log" "0" "$eta_to_shutdown" "energy-increased"
   logger -t "$LOG_TAG" "Battery energy increased (${LAST_ENERGY_NOW} -> ${energy_now}); clearing armed state"
-  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$current_timestamp" "$ac_online"
+  save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$charge_now" "$current_timestamp" "$ac_online"
   exit 0
 fi
 
 if [[ "${DRY_RUN}" == "1" ]]; then
-  emit_status "crit" "dry-run-shutdown" "$battery" "$ac_device:offline" "${capacity}%" "$status" "1" "shutdown-now" "persistent-low-battery"
+  emit_status "crit" "dry-run-shutdown" "$battery" "$ac_device:offline" "${capacity}%" "$status_log" "1" "shutdown-now" "persistent-low-battery"
 else
-  emit_status "crit" "shutdown" "$battery" "$ac_device:offline" "${capacity}%" "$status" "1" "shutdown-now" "persistent-low-battery"
+  emit_status "crit" "shutdown" "$battery" "$ac_device:offline" "${capacity}%" "$status_log" "1" "shutdown-now" "persistent-low-battery"
 fi
 logger -t "$LOG_TAG" "Battery low persisted (${capacity}%, status=${status}, ac=${ac_device}); initiating shutdown"
 clear_state
