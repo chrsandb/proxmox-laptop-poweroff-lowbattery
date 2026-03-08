@@ -15,6 +15,32 @@ This repository contains a host-side Proxmox VE battery shutdown tool intended f
 - Use `gh repo create`, `gh repo fork`, `gh pr create`, `gh issue create`, and `gh release` commands as needed.
 - Prefer non-interactive `gh` commands where possible.
 
+## Upstream Submission Workflow
+- The intended upstream target is `community-scripts/ProxmoxVE`.
+- Submit this project as a `tools/pve` contribution, not as a `ct/` container script or a Proxmox UI/plugin change.
+- The expected upstream file pair is:
+  - `tools/pve/laptop-battery-shutdown.sh`
+  - `frontend/public/json/laptop-battery-shutdown.json`
+- Before preparing an upstream PR, check the current upstream guidance:
+  - `docs/contribution/README.md`
+  - `docs/tools/README.md`
+  - one or more current `tools/pve/*.sh` examples
+  - one or more current `frontend/public/json/*.json` entries with `\"type\": \"pve\"`
+- Prefer this workflow for upstream contribution:
+  - `gh repo fork community-scripts/ProxmoxVE`
+  - clone the fork locally
+  - run `bash docs/contribution/setup-fork.sh --full`
+  - create a feature branch
+  - copy in the tool script and matching JSON metadata
+  - test from the fork, including the raw GitHub delivery path if relevant
+  - open the PR with `gh pr create`
+- Keep the contribution aligned with existing `tools/pve` conventions:
+  - `#!/usr/bin/env bash`
+  - host-side Proxmox tool behavior
+  - minimal, catalog-friendly JSON metadata
+  - no assumptions that this belongs in `/ct`, `/install`, or Proxmox web UI code
+- Treat `documentation` and `website` fields in JSON as review-sensitive. Upstream may prefer links that fit their ecosystem better than a standalone repo homepage.
+
 ## Sensitive Data Policy
 Never commit any of the following:
 - internal IP addresses

@@ -2,6 +2,19 @@
 
 Host-side battery monitoring for Proxmox VE running on laptop hardware.
 
+## Run on Proxmox VE
+Run the installer directly on the Proxmox host shell:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/chrsandb/proxmox-laptop-poweroff-lowbattery/main/tools/pve/laptop-battery-shutdown.sh)"
+```
+
+Direct script URL:
+
+```text
+https://raw.githubusercontent.com/chrsandb/proxmox-laptop-poweroff-lowbattery/main/tools/pve/laptop-battery-shutdown.sh
+```
+
 ## What It Does
 - Monitors `/sys/class/power_supply/BAT*/uevent`
 - Detects whether AC power is online
@@ -67,9 +80,3 @@ Common firmware option names:
 - `AC Power Recovery`
 
 Scheduled power-on is useful when the battery is weak and the laptop may need extra charging time before it can boot reliably.
-
-## Upstream Submission Notes
-For a `community-scripts/ProxmoxVE` submission, documentation should include:
-- threshold guidance for new vs aging batteries
-- note that live threshold may need to be raised on weak batteries
-- BIOS/UEFI auto-start recommendations after shutdown

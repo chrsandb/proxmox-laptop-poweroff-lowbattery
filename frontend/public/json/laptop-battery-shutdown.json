@@ -10,10 +10,10 @@
   "privileged": false,
   "interface_port": null,
   "documentation": "https://github.com/chrsandb/proxmox-laptop-poweroff-lowbattery/blob/main/README.md",
-  "website": "https://github.com/chrsandb/proxmox-laptop-poweroff-lowbattery",
+  "website": null,
   "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/proxmox.webp",
   "config_path": "/etc/default/pve-battery-monitor",
-  "description": "Installs a host-side battery monitor for Proxmox VE running on laptop hardware. The generated systemd timer checks battery state from /sys/class/power_supply and performs a graceful host shutdown when battery power remains below the configured threshold while AC power is offline.",
+  "description": "Installs a host-side battery monitor for Proxmox VE running on laptop hardware. A generated systemd timer checks battery state from /sys/class/power_supply and performs a graceful host shutdown when battery power remains below the configured threshold while AC power is offline.",
   "install_methods": [
     {
       "type": "default",
@@ -33,19 +33,19 @@
   },
   "notes": [
     {
-      "text": "Execute within the Proxmox shell.",
+      "text": "Execute within the Proxmox shell",
       "type": "info"
     },
     {
-      "text": "Set `DRY_RUN=1` in `/etc/default/pve-battery-monitor` before validating behavior on a production host.",
+      "text": "Set DRY_RUN=1 in /etc/default/pve-battery-monitor before validating behavior on a production host",
       "type": "warning"
     },
     {
-      "text": "A `10%` threshold may be acceptable for a healthy new battery, but `25%` or higher is often safer for older batteries or batteries with unstable low-end reporting.",
+      "text": "A 10% threshold may be suitable for a healthy battery, but 25% or higher may be safer for older batteries or batteries with unstable low-end reporting",
       "type": "warning"
     },
     {
-      "text": "For unattended recovery after shutdown, enable BIOS/UEFI auto power-on on AC restore or a scheduled RTC wake/power-on alarm.",
+      "text": "For unattended recovery after shutdown, enable BIOS or UEFI auto power-on on AC restore or a scheduled RTC wake or power-on alarm",
       "type": "info"
     }
   ]
