@@ -117,11 +117,8 @@ Behavior scenarios:
 - The repository default can remain `10%`, but operator documentation should clearly recommend validating battery health and raising the live threshold on aging hardware.
 
 ## Next Steps
-1. Move these files into an actual `community-scripts/DevScripts` fork, include user-facing documentation (`README.md` or equivalent), and test there with the normal curl entrypoint.
-   Documentation should explain:
-   - `10%` may be acceptable for a new battery in good health
-   - `25%` is safer for older or unstable batteries
-   - BIOS/UEFI auto-start on AC restore and scheduled power-on tips
+1. Track [DevScripts PR #2630](https://github.com/community-scripts/DevScripts/pull/2630), respond to review feedback, and obtain maintainer review of the host-tool eligibility question.
+2. Follow the DevScripts testing and promotion process after acceptance.
 
 ## Operational Tips
 - Document that laptop recovery after low-battery shutdown is usually controlled in BIOS/UEFI, not by Proxmox.
@@ -156,3 +153,11 @@ Behavior scenarios:
 - The enabled timer automatically triggered another successful check after configuration restoration.
 - Existing configuration was preserved through install, update, and removal, then restored after testing. Rollback files and detailed test logs were retained outside the repository.
 - Proxmox VE 8 compatibility and a new physical low-battery shutdown test remain unverified for this revision.
+
+## Upstream Submission
+- Opened [DevScripts PR #2630](https://github.com/community-scripts/DevScripts/pull/2630) from `chrsandb/DevScripts`, branch `feat/laptop-battery-shutdown`, on 2026-11-13.
+- The contribution contains the host script and matching JSON metadata. Its default download URL targets DevScripts for automatic rewriting during promotion.
+- All 19 regression tests passed on the revised standalone and contribution scripts. The added regression verifies that curl/bash launches retain the supplied source.
+- The fork's install, status, update, removal, reinstallation, configuration preservation, and systemd validation passed on Proxmox VE 9.2 amd64 with `DRY_RUN=1` and AC connected.
+- Verified the fork's curl/bash entrypoint without a source-URL override, using a revision query to bypass raw-content caching. The original standalone installation and configuration were restored afterward.
+- The PR discloses AI assistance and unverified platforms and shutdown testing. Application eligibility boxes for stars and release artifacts remain unchecked, and the automated check flags them for maintainer review under its seven-day stale policy.
