@@ -160,4 +160,10 @@ Behavior scenarios:
 - All 19 regression tests passed on the revised standalone and contribution scripts. The added regression verifies that curl/bash launches retain the supplied source.
 - The fork's install, status, update, removal, reinstallation, configuration preservation, and systemd validation passed on Proxmox VE 9.2 amd64 with `DRY_RUN=1` and AC connected.
 - Verified the fork's curl/bash entrypoint without a source-URL override, using a revision query to bypass raw-content caching. The original standalone installation and configuration were restored afterward.
-- The PR discloses AI assistance and unverified platforms and shutdown testing. Application eligibility boxes for stars and release artifacts remain unchecked, and the automated check flags them for maintainer review under its seven-day stale policy.
+- The PR discloses AI assistance and unverified platforms and shutdown testing. The release-artifact requirement is checked after publishing `v0.1.0`. The stars requirement remains unchecked, with an exception and `keep-open` requested for maintainer assessment under the seven-day stale policy.
+
+## First Release
+- Published [v0.1.0](https://github.com/chrsandb/proxmox-laptop-poweroff-lowbattery/releases/tag/v0.1.0) from commit `455f9badb5c34359121aa1406addb8d4a399f782` on 2026-11-13.
+- Release assets include a versioned source tarball containing the installer, README, MIT license, metadata, and tests, plus `SHA256SUMS`.
+- All 19 tests passed from the extracted archive. The published archive was downloaded and checksum-verified.
+- Updated DevScripts PR #2630 and requested an exception to the stars threshold and a maintainer-applied `keep-open` label.
