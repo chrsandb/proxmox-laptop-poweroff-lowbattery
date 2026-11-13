@@ -145,3 +145,13 @@ Behavior scenarios:
 - Confirmation requires samples from the same boot and devices, no more than three check intervals apart.
 - Run `python3 -m unittest discover -s tests -v`, ShellCheck, shfmt, Bash syntax checks, and JSON validation before submission.
 - Prepare a DevScripts PR after published-entrypoint testing and clarification of host-utility eligibility with maintainers.
+
+## Validation Completed
+- 2026-11-13, commit `7101292` published to the standalone repository.
+- All 18 isolated regression tests passed, along with ShellCheck, shfmt, Bash syntax, JSON validation, and staged sensitive-data checks.
+- Tested on Proxmox VE 9.2, amd64, with AC power connected and `DRY_RUN=1`.
+- The published curl entrypoint, installed status command, update wrapper, uninstall wrapper, and reinstallation passed.
+- The installed source matched the published script, and generated units passed `systemd-analyze verify`.
+- The enabled timer automatically triggered another successful check after configuration restoration.
+- Existing configuration was preserved through install, update, and removal, then restored after testing. Rollback files and detailed test logs were retained outside the repository.
+- Proxmox VE 8 compatibility and a new physical low-battery shutdown test remain unverified for this revision.
