@@ -234,6 +234,15 @@ esac''')
         self.assertFalse(self.check.exists())
         self.assertTrue(self.config.exists())
 
+    def test_curl_style_install_uses_supplied_source(self):
+        supplied_source = self.script.read_text().replace(
+            'APP="PVE Laptop Battery Shutdown"', 'APP="Supplied Branch Monitor"')
+        self.stub('curl', 'exit 22')
+        output = self.run_command(['bash', '-c', supplied_source, 'bash', 'install'])
+        self.assertIn('Supplied Branch Monitor', output)
+        stored = self.root / 'usr/local/lib/pve-battery-monitor/laptop-battery-shutdown.sh'
+        self.assertEqual(stored.read_text(), supplied_source)
+
 
 if __name__ == '__main__':
     unittest.main()
