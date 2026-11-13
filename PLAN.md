@@ -173,4 +173,9 @@ Behavior scenarios:
 - Treat `AC_DEVICE` as a preferred reporting label and exclude battery and device-scoped peripheral supplies from adapter detection.
 - Set `AccuracySec=1s` so short polling intervals remain compatible with the three-interval confirmation freshness window.
 - All 26 regression tests passed, including the reported charge-based USB-C case, invalid supply readings, peripheral exclusion, and five-second timer configuration with systemd verification.
-- The release-artifact criterion is satisfied by `v0.1.0`. A maintainer decision on the stars exception remains pending. The code fixes above follow the `v0.1.0` release.
+- The release-artifact criterion is satisfied by `v0.1.1`, which includes these fixes. A maintainer decision on the stars exception remains pending.
+
+## Patch Release
+- Published [v0.1.1](https://github.com/chrsandb/proxmox-laptop-poweroff-lowbattery/releases/tag/v0.1.1) from commit `9f1236d25b776e355886b95a3a78ec2604c95164` with the external-power aggregation and timer-accuracy fixes.
+- All 26 tests and static checks passed from the extracted source archive. The uploaded archive was downloaded and verified against `SHA256SUMS`.
+- Marked `v0.1.1` as the latest release and updated the upstream PR's release-artifact reference.
