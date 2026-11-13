@@ -27,7 +27,17 @@ This repository contains a host-side Proxmox VE battery shutdown tool intended f
 - Test the published entrypoint, install, update, status, removal, and battery decision logic before submission.
 - Set `PVE_BATTERY_SCRIPT_URL` to the fork's raw script URL during fork testing. This URL is preserved by the installed manager for subsequent updates.
 - Fill in the current PR template, including PVE Tool, actual platforms tested, and accurate AI-assistance details.
-- The current new-script PR validation enforces the application eligibility checkboxes when New script is selected, including age, stars, and release tarballs. Document this host utility honestly and request maintainer guidance on the applicable criteria.
+- The current new-script PR validation enforces the application eligibility checkboxes when New script is selected, including age, stars, and release tarballs. Document this host utility honestly and flag applicability questions in the PR for maintainer review.
+
+## Contribution References
+- Review the [contribution rules](https://community-scripts.org/docs/contribution/contributing) and [authoring workflow](https://community-scripts.org/docs/contribution/guide) before preparing a submission.
+- Use the [JSON template](https://community-scripts.org/docs/contribution/templates_json/appname) for metadata. Limit notes to three short operator-facing items and describe the tool's behavior within roughly 400 characters.
+- Use the [fork setup guide](https://community-scripts.org/docs/contribution/fork_setup) for independent script and Core roots. Preserve `COMMUNITY_SCRIPTS_CORE_URL` overrides during branch testing.
+- Apply the [review checklist](https://community-scripts.org/docs/contribution/code-audit) to the relevant script type, and report actual platform and failure-path tests.
+- Follow the [AI-assisted contribution guidance](https://community-scripts.org/docs/contribution/agents). Disclose model names, reasoning effort where known, and the extent of review and testing accurately.
+- The [install template](https://community-scripts.org/docs/contribution/templates_install/appname-install) describes the prepared in-container runtime and its lifecycle calls. Use current `tools/pve` references for this host utility's structure and telemetry.
+- Consult the [helper guidance](https://community-scripts.org/docs/contribution/helper_functions) and current Core API inventory before choosing shared helpers. Read helper implementations to confirm their runtime assumptions and parameters.
+- Keep the project README as the metadata documentation link while it provides the tool's upstream documentation. The template allows project website links and null website values.
 
 ## Sensitive Data Policy
 Never commit any of the following:

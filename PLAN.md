@@ -144,7 +144,8 @@ Behavior scenarios:
 - The installer supports curl/bash launches and downloads updates from `PVE_BATTERY_SCRIPT_URL`, defaulting to this project's published script.
 - Confirmation requires samples from the same boot and devices, no more than three check intervals apart.
 - Run `python3 -m unittest discover -s tests -v`, ShellCheck, shfmt, Bash syntax checks, and JSON validation before submission.
-- Prepare a DevScripts PR after published-entrypoint testing and clarification of host-utility eligibility with maintainers.
+- Prepare a focused DevScripts PR with published-entrypoint test results and an accurate AI-assistance disclosure. Flag the application eligibility checklist's applicability to this host utility in the PR for maintainer review.
+- Follow the current contribution references recorded in `AGENTS.md`, including the JSON template's three-note limit and behavior-focused description.
 
 ## Validation Completed
 - 2026-11-13, commit `7101292` published to the standalone repository.

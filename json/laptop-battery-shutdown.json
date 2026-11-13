@@ -12,7 +12,7 @@
   "documentation": "https://github.com/chrsandb/proxmox-laptop-poweroff-lowbattery/blob/main/README.md",
   "website": null,
   "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/proxmox.webp",
-  "description": "Installs a host-side battery monitor for Proxmox VE running on laptop hardware. A generated systemd timer checks battery state from /sys/class/power_supply and performs a graceful host shutdown when battery power remains below the configured threshold while AC power is offline.",
+  "description": "Battery monitoring for Proxmox VE on laptop hardware, with compact status logs and estimated runtime. A systemd timer checks battery and AC status and triggers graceful host shutdown after consecutive low-battery readings while external power is disconnected.",
   "install_methods": [
     {
       "type": "default",
@@ -33,11 +33,7 @@
   },
   "notes": [
     {
-      "text": "Execute within the Proxmox shell",
-      "type": "info"
-    },
-    {
-      "text": "Set DRY_RUN=1 in /etc/default/pve-battery-monitor before validating behavior on a production host",
+      "text": "Run in the Proxmox host shell. Set DRY_RUN=1 in /etc/default/pve-battery-monitor before testing shutdown behavior.",
       "type": "warning"
     },
     {
