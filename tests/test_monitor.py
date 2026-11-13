@@ -119,6 +119,72 @@ esac''')
         self.battery('invalid')
         self.assertIn('detail=missing-capacity', self.check_run())
 
+    def add_supply(self, name, online, supply_type='USB', scope='System'):
+        path = self.supply / name
+        path.mkdir(exist_ok=True)
+        (path / 'online').write_text(str(online) + '\n')
+        (path / 'type').write_text(supply_type + '\n')
+        (path / 'scope').write_text(scope + '\n')
+
+    def test_usb_power_blocks_shutdown_for_charge_based_battery(self):
+        self.battery(9)
+        (self.supply / 'BAT0/uevent').write_text(
+            'POWER_SUPPLY_CAPACITY=9\nPOWER_SUPPLY_STATUS=Charging\n'
+            'POWER_SUPPLY_CHARGE_NOW=900000\nPOWER_SUPPLY_CHARGE_FULL=10000000\n')
+        self.add_supply('USB_C', 1)
+        for charge in (900000, 910000):
+            battery_path = self.supply / 'BAT0/uevent'
+            data = battery_path.read_text().replace('900000\n', f'{charge}\n')
+            battery_path.write_text(data)
+            self.assertIn('ac=USB_C:online', self.check_run())
+            self.assertIn('ARMED=0', self.state.read_text())
+        self.assertFalse(self.events.exists())
+        self.assertIn('AC source: USB_C', self.run_script('status', self.manager))
+
+    def test_preferred_offline_adapter_cannot_hide_online_usb(self):
+        self.config.write_text(self.config.read_text() + 'AC_DEVICE="AC"\n')
+        self.battery(20)
+        self.add_supply('USB_C', 1)
+        self.assertIn('detail=external-power-present', self.check_run())
+
+    def test_all_external_sources_offline_allows_confirmation(self):
+        self.battery(20)
+        self.add_supply('USB_C', 0)
+        self.assertIn('action=arm', self.check_run())
+        self.age_state(LAST_TIMESTAMP=int(time.time()) - 1)
+        self.assertIn('action=dry-run-shutdown', self.check_run())
+
+    def test_unknown_external_supply_clears_confirmation(self):
+        self.battery(20)
+        self.check_run()
+        self.add_supply('USB_C', 'invalid')
+        self.assertIn('action=clear-state', self.check_run())
+        self.assertFalse(self.state.exists())
+
+    def test_peripheral_and_battery_online_flags_are_excluded(self):
+        self.battery(20)
+        self.add_supply('mouse', 1, scope='Device')
+        self.add_supply('BAT1', 1, supply_type='Battery')
+        self.assertIn('action=arm', self.check_run())
+
+    def test_online_usb_permits_install_with_invalid_ac_reading(self):
+        (self.supply / 'AC/online').write_text('invalid\n')
+        self.add_supply('USB_C', 1)
+        self.assertIn('Detected AC source: USB_C', self.run_script('install'))
+
+    def test_short_timer_interval_and_confirmation(self):
+        self.config.write_text(self.config.read_text().replace(
+            'CHECK_INTERVAL_SECONDS=60', 'CHECK_INTERVAL_SECONDS=5'))
+        self.run_script('install')
+        timer = self.root / 'etc/systemd/system/pve-battery-monitor.timer'
+        self.assertIn('OnUnitActiveSec=5s\nAccuracySec=1s', timer.read_text())
+        service = timer.with_name('pve-battery-monitor.service')
+        self.run_command(['systemd-analyze', 'verify', str(service), str(timer)])
+        self.battery(20)
+        self.assertIn('action=arm', self.check_run())
+        self.age_state(LAST_TIMESTAMP=int(time.time()) - 6)
+        self.assertIn('action=dry-run-shutdown', self.check_run())
+
     def test_installed_update_fetches_new_source(self):
         self.script.write_text(self.script.read_text().replace(
             'APP="PVE Laptop Battery Shutdown"', 'APP="Fixture Updated Monitor"'))

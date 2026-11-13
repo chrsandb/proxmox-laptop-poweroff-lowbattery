@@ -19,7 +19,7 @@ https://raw.githubusercontent.com/chrsandb/proxmox-laptop-poweroff-lowbattery/ma
 
 ## What It Does
 - Monitors `/sys/class/power_supply/BAT*/uevent`
-- Detects whether AC power is online
+- Checks all system-scoped external power supplies, including USB-C adapters
 - Logs one compact status line per run to the `pve-battery-monitor.service` journal
 - Arms shutdown on the first low-battery sample
 - Shuts the host down on the next low-battery sample if the battery is still below the configured threshold and not recovering
@@ -65,6 +65,10 @@ For fork testing, export `PVE_BATTERY_SCRIPT_URL` with the raw script URL before
 Set `DRY_RUN=1` before testing shutdown behavior. After changing `CHECK_INTERVAL_SECONDS`, rerun the installer to regenerate the timer.
 
 Shutdown confirmation resets after reboot, a device change, or a gap longer than three check intervals.
+
+`AC_DEVICE` selects a preferred adapter label. Any detected external supply reporting online prevents shutdown. An unreadable or invalid supply reading clears shutdown confirmation when all other supplies report offline. Battery devices and device-scoped peripheral supplies are excluded from external-power detection.
+
+The timer uses `AccuracySec=1s`, including when a shorter polling interval is configured.
 
 ## Threshold Guidance
 - `10%` can be acceptable for a new battery in good health with predictable discharge behavior.

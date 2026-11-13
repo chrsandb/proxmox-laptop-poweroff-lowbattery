@@ -37,7 +37,7 @@ Behavior and flow:
   - `systemd` is available
 - Script auto-detects runtime devices:
   - battery: first `BAT*`, overrideable via config
-  - AC source: first power-supply entry with `online`, prefer `AC`, overrideable via config
+- AC availability: aggregate system-scoped external supplies, including USB-C. `AC_DEVICE` selects a preferred reporting label.
 
 Generated config interface:
 - `/etc/default/pve-battery-monitor` contains only generic defaults, no host data baked into repo:
@@ -78,7 +78,7 @@ Check algorithm:
 
 Systemd units:
 - `pve-battery-monitor.service`: simple service running `/usr/local/bin/pve-battery-monitor-check`
-- `pve-battery-monitor.timer`: `OnBootSec=60s`, `OnUnitActiveSec=60s`
+- `pve-battery-monitor.timer`: `OnBootSec=60s`, `OnUnitActiveSec=60s`, `AccuracySec=1s`
 - `Remove` disables/removes units, helpers, and state files. The configuration is retained.
 
 Public interfaces and defaults:
@@ -167,3 +167,10 @@ Behavior scenarios:
 - Release assets include a versioned source tarball containing the installer, README, MIT license, metadata, and tests, plus `SHA256SUMS`.
 - All 19 tests passed from the extracted archive. The published archive was downloaded and checksum-verified.
 - Updated DevScripts PR #2630 and requested an exception to the stars threshold and a maintainer-applied `keep-open` label.
+
+## Codex Review Fixes
+- Aggregate external power across system-scoped supplies, including USB-C. Any online adapter prevents shutdown; uncertain readings clear confirmation when all other adapters report offline.
+- Treat `AC_DEVICE` as a preferred reporting label and exclude battery and device-scoped peripheral supplies from adapter detection.
+- Set `AccuracySec=1s` so short polling intervals remain compatible with the three-interval confirmation freshness window.
+- All 26 regression tests passed, including the reported charge-based USB-C case, invalid supply readings, peripheral exclusion, and five-second timer configuration with systemd verification.
+- The release-artifact criterion is satisfied by `v0.1.0`. A maintainer decision on the stars exception remains pending. The code fixes above follow the `v0.1.0` release.
