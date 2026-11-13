@@ -12,7 +12,6 @@
   "documentation": "https://github.com/chrsandb/proxmox-laptop-poweroff-lowbattery/blob/main/README.md",
   "website": null,
   "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/proxmox.webp",
-  "config_path": "/etc/default/pve-battery-monitor",
   "description": "Installs a host-side battery monitor for Proxmox VE running on laptop hardware. A generated systemd timer checks battery state from /sys/class/power_supply and performs a graceful host shutdown when battery power remains below the configured threshold while AC power is offline.",
   "install_methods": [
     {
@@ -24,7 +23,8 @@
         "hdd": null,
         "os": null,
         "version": null
-      }
+      },
+      "config_path": "/etc/default/pve-battery-monitor"
     }
   ],
   "default_credentials": {
@@ -48,5 +48,12 @@
       "text": "For unattended recovery after shutdown, enable BIOS or UEFI auto power-on on AC restore or a scheduled RTC wake or power-on alarm",
       "type": "info"
     }
+  ],
+  "repository": "https://github.com/chrsandb/proxmox-laptop-poweroff-lowbattery",
+  "architectures": [
+    "amd64"
+  ],
+  "platforms": [
+    "pve"
   ]
 }

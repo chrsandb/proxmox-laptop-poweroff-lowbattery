@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# Copyright (c) 2021-2026 community-scripts ORG
-# Author: OpenAI Codex
+# Copyright (c) 2026 Christian Sandberg
+# Author: Christian Sandberg (chrsandb)
 # License: MIT
-# https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
+# https://github.com/chrsandb/proxmox-laptop-poweroff-lowbattery/blob/main/LICENSE
 #
 # Approaches considered for upstream submission:
 # - Pure Bash + systemd timer (implemented)
@@ -13,9 +13,26 @@
 
 set -eEuo pipefail
 
+UPSTREAM_SCRIPT_URL="${PVE_BATTERY_SCRIPT_URL:-https://raw.githubusercontent.com/chrsandb/proxmox-laptop-poweroff-lowbattery/main/tools/pve/laptop-battery-shutdown.sh}"
+
+# Materialize curl/bash -c and process-substitution launches for installed management.
+if [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
+  installer_tmp="$(mktemp)"
+  trap 'rm -f "$installer_tmp"' EXIT
+  curl -fsSL --connect-timeout 10 --max-time 60 "$UPSTREAM_SCRIPT_URL" -o "$installer_tmp"
+  bash -n "$installer_tmp"
+  PVE_BATTERY_SCRIPT_URL="$UPSTREAM_SCRIPT_URL" bash "$installer_tmp" "$@"
+  exit $?
+fi
+
 if command -v curl >/dev/null 2>&1; then
-  source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/api.func) 2>/dev/null || true
-  declare -f init_tool_telemetry >/dev/null 2>&1 && init_tool_telemetry "laptop-battery-shutdown" "pve"
+  # shellcheck disable=SC2016 # Variables expand in the telemetry child shell.
+  timeout 15s bash -c '
+    source <(curl -fsSL --connect-timeout 5 --max-time 10 "${COMMUNITY_SCRIPTS_CORE_URL:-https://raw.githubusercontent.com/community-scripts/core/main}/api/api.func") 2>/dev/null || true
+    if declare -f init_tool_telemetry >/dev/null 2>&1; then
+      init_tool_telemetry "laptop-battery-shutdown" "pve"
+    fi
+  ' || true
 fi
 
 APP="PVE Laptop Battery Shutdown"
@@ -26,7 +43,6 @@ UPDATE_WRAPPER_PATH="/usr/local/bin/update_pve_battery_monitor"
 UNINSTALL_WRAPPER_PATH="/usr/local/bin/uninstall_pve_battery_monitor"
 INSTALLER_STORE_DIR="/usr/local/lib/pve-battery-monitor"
 INSTALLER_STORE_PATH="${INSTALLER_STORE_DIR}/laptop-battery-shutdown.sh"
-UPSTREAM_SCRIPT_URL="https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/laptop-battery-shutdown.sh"
 STATE_DIR="/var/lib/pve-battery-monitor"
 STATE_PATH="${STATE_DIR}/state"
 SERVICE_PATH="/etc/systemd/system/pve-battery-monitor.service"
@@ -110,7 +126,7 @@ write_config() {
   if [[ -f "$CONFIG_PATH" ]]; then
     return 0
   fi
-  cat <<'EOF' >"$CONFIG_PATH"
+  cat <<'EOF' >"${staging_dir}/config"
 # Generic defaults only. Override devices if autodetection picks the wrong entry.
 BATTERY_DEVICE=""
 AC_DEVICE=""
@@ -118,12 +134,11 @@ LOW_CAPACITY_PERCENT=10
 CHECK_INTERVAL_SECONDS=60
 DRY_RUN=0
 EOF
-  chmod 0644 "$CONFIG_PATH"
 }
 
 write_check_script() {
   mkdir -p "$(dirname "$CHECK_PATH")" "$STATE_DIR"
-  cat <<'EOF' >"$CHECK_PATH"
+  cat <<'EOF' >"${staging_dir}/check"
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -133,6 +148,8 @@ STATE_PATH="${STATE_DIR}/state"
 LOG_TAG="pve-battery-monitor"
 
 mkdir -p "$STATE_DIR"
+exec 9>"${STATE_DIR}/lock"
+flock -n 9 || exit 0
 
 BATTERY_DEVICE=""
 AC_DEVICE=""
@@ -143,6 +160,19 @@ DRY_RUN=0
 if [[ -f "$CONFIG_PATH" ]]; then
   # shellcheck disable=SC1090
   source "$CONFIG_PATH"
+fi
+
+if [[ ! "$LOW_CAPACITY_PERCENT" =~ ^[0-9]+$ ]] ||
+  [[ ! "$CHECK_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] ||
+  [[ ! "$DRY_RUN" =~ ^[01]$ ]]; then
+  echo "Invalid battery monitor configuration" >&2
+  exit 1
+fi
+LOW_CAPACITY_PERCENT=$((10#$LOW_CAPACITY_PERCENT))
+CHECK_INTERVAL_SECONDS=$((10#$CHECK_INTERVAL_SECONDS))
+if ((LOW_CAPACITY_PERCENT < 1 || LOW_CAPACITY_PERCENT > 100 || CHECK_INTERVAL_SECONDS < 1)); then
+  echo "Battery threshold must be 1-100 and interval must be positive" >&2
+  exit 1
 fi
 
 detect_battery() {
@@ -241,11 +271,11 @@ estimate_eta_to_shutdown() {
   fi
 
   mode=""
-  if [[ "$energy_now" =~ ^[0-9]+$ ]] && [[ "$energy_full" =~ ^[0-9]+$ ]] && (( energy_full > 0 )); then
+  if [[ "$energy_now" =~ ^[0-9]+$ ]] && [[ "$energy_full" =~ ^[0-9]+$ ]] && ((energy_full > 0)); then
     mode="energy"
     shutdown_level=$((energy_full * threshold_percent / 100))
     remaining_level=$((energy_now - shutdown_level))
-  elif [[ "$charge_now" =~ ^[0-9]+$ ]] && [[ "$charge_full" =~ ^[0-9]+$ ]] && (( charge_full > 0 )); then
+  elif [[ "$charge_now" =~ ^[0-9]+$ ]] && [[ "$charge_full" =~ ^[0-9]+$ ]] && ((charge_full > 0)); then
     mode="charge"
     shutdown_level=$((charge_full * threshold_percent / 100))
     remaining_level=$((charge_now - shutdown_level))
@@ -254,35 +284,35 @@ estimate_eta_to_shutdown() {
     return 0
   fi
 
-  if (( remaining_level <= 0 )); then
+  if ((remaining_level <= 0)); then
     printf 'shutdown-now\n'
     return 0
   fi
 
   if [[ "$mode" == "energy" ]]; then
     discharge_rate=0
-    if [[ "$power_now" =~ ^[0-9]+$ ]] && (( power_now > 0 )); then
+    if [[ "$power_now" =~ ^[0-9]+$ ]] && ((power_now > 0)); then
       discharge_rate=$power_now
-    elif [[ "$current_now" =~ ^[0-9]+$ ]] && [[ "$voltage_now" =~ ^[0-9]+$ ]] && (( current_now > 0 && voltage_now > 0 )); then
+    elif [[ "$current_now" =~ ^[0-9]+$ ]] && [[ "$voltage_now" =~ ^[0-9]+$ ]] && ((current_now > 0 && voltage_now > 0)); then
       # uA * uV / 1_000_000 = uW
       discharge_rate=$((current_now * voltage_now / 1000000))
     fi
 
-    if (( discharge_rate > 0 )); then
+    if ((discharge_rate > 0)); then
       eta_seconds=$((remaining_level * 3600 / discharge_rate))
       format_eta "$eta_seconds"
       return 0
     fi
 
     if [[ "$last_ac_online" == "0" ]] &&
-       [[ "$last_energy_now" =~ ^[0-9]+$ ]] &&
-       [[ "$last_timestamp" =~ ^[0-9]+$ ]] &&
-       [[ "$current_timestamp" =~ ^[0-9]+$ ]] &&
-       (( current_timestamp > last_timestamp )) &&
-       (( last_energy_now > energy_now )); then
+      [[ "$last_energy_now" =~ ^[0-9]+$ ]] &&
+      [[ "$last_timestamp" =~ ^[0-9]+$ ]] &&
+      [[ "$current_timestamp" =~ ^[0-9]+$ ]] &&
+      ((current_timestamp > last_timestamp)) &&
+      ((last_energy_now > energy_now)); then
       delta_value=$((last_energy_now - energy_now))
       delta_time=$((current_timestamp - last_timestamp))
-      if (( delta_value > 0 && delta_time > 0 )); then
+      if ((delta_value > 0 && delta_time > 0)); then
         eta_seconds=$((remaining_level * delta_time / delta_value))
         format_eta "$eta_seconds"
         return 0
@@ -291,21 +321,21 @@ estimate_eta_to_shutdown() {
   fi
 
   if [[ "$mode" == "charge" ]]; then
-    if [[ "$current_now" =~ ^[0-9]+$ ]] && (( current_now > 0 )); then
+    if [[ "$current_now" =~ ^[0-9]+$ ]] && ((current_now > 0)); then
       eta_seconds=$((remaining_level * 3600 / current_now))
       format_eta "$eta_seconds"
       return 0
     fi
 
     if [[ "$last_ac_online" == "0" ]] &&
-       [[ "$last_charge_now" =~ ^[0-9]+$ ]] &&
-       [[ "$last_timestamp" =~ ^[0-9]+$ ]] &&
-       [[ "$current_timestamp" =~ ^[0-9]+$ ]] &&
-       (( current_timestamp > last_timestamp )) &&
-       (( last_charge_now > charge_now )); then
+      [[ "$last_charge_now" =~ ^[0-9]+$ ]] &&
+      [[ "$last_timestamp" =~ ^[0-9]+$ ]] &&
+      [[ "$current_timestamp" =~ ^[0-9]+$ ]] &&
+      ((current_timestamp > last_timestamp)) &&
+      ((last_charge_now > charge_now)); then
       delta_value=$((last_charge_now - charge_now))
       delta_time=$((current_timestamp - last_timestamp))
-      if (( delta_value > 0 && delta_time > 0 )); then
+      if ((delta_value > 0 && delta_time > 0)); then
         eta_seconds=$((remaining_level * delta_time / delta_value))
         format_eta "$eta_seconds"
         return 0
@@ -325,8 +355,11 @@ save_state() {
   local charge="$6"
   local timestamp="$7"
   local ac_online="$8"
-  cat <<STATE >"$STATE_PATH"
+  local state_tmp
+  state_tmp="$(mktemp "${STATE_DIR}/state.XXXXXX")"
+  cat <<STATE >"$state_tmp"
 ARMED=${armed}
+STATE_BOOT_ID="${current_boot_id}"
 STATE_BATTERY_DEVICE="${battery}"
 STATE_AC_DEVICE="${ac}"
 LAST_CAPACITY="${capacity}"
@@ -335,6 +368,7 @@ LAST_CHARGE_NOW="${charge}"
 LAST_TIMESTAMP="${timestamp}"
 LAST_AC_ONLINE="${ac_online}"
 STATE
+  mv -f "$state_tmp" "$STATE_PATH"
 }
 
 if ! battery="$(detect_battery)"; then
@@ -380,12 +414,13 @@ status_log="${status// /_}"
 ac_online="$(cat "/sys/class/power_supply/${ac_device}/online" 2>/dev/null || echo 1)"
 current_timestamp="$(date +%s)"
 
-if [[ -z "$capacity" ]]; then
+if [[ ! "$capacity" =~ ^[0-9]+$ ]] || ((10#$capacity > 100)); then
   emit_status "skip" "clear-state" "$battery" "$ac_device" "unknown" "$status_log" "0" "unknown" "missing-capacity"
   logger -t "$LOG_TAG" "Battery capacity unavailable for ${battery}; clearing state"
   clear_state
   exit 0
 fi
+capacity=$((10#$capacity))
 
 ARMED=0
 LAST_CAPACITY=-1
@@ -393,9 +428,20 @@ LAST_ENERGY_NOW=-1
 LAST_CHARGE_NOW=-1
 LAST_TIMESTAMP=0
 LAST_AC_ONLINE=-1
+STATE_BOOT_ID=""
+STATE_BATTERY_DEVICE=""
+STATE_AC_DEVICE=""
+current_boot_id="$(cat /proc/sys/kernel/random/boot_id)"
 if [[ -f "$STATE_PATH" ]]; then
   # shellcheck disable=SC1090
   source "$STATE_PATH"
+fi
+
+if [[ "$STATE_BOOT_ID" != "$current_boot_id" || "$STATE_BATTERY_DEVICE" != "$battery" || "$STATE_AC_DEVICE" != "$ac_device" ]] ||
+  [[ ! "$LAST_TIMESTAMP" =~ ^[0-9]+$ ]] ||
+  ((current_timestamp <= LAST_TIMESTAMP || current_timestamp - LAST_TIMESTAMP > CHECK_INTERVAL_SECONDS * 3)); then
+  ARMED=0
+  LAST_AC_ONLINE=-1
 fi
 
 eta_to_shutdown="$(estimate_eta_to_shutdown \
@@ -416,37 +462,37 @@ eta_to_shutdown="$(estimate_eta_to_shutdown \
 
 if [[ "$ac_online" != "0" ]]; then
   emit_status "ok" "none" "$battery" "$ac_device:online" "${capacity}%" "$status_log" "0" "$eta_to_shutdown" "external-power-present"
-  if (( ARMED == 1 )); then
+  if ((ARMED == 1)); then
     logger -t "$LOG_TAG" "AC power restored on ${ac_device}; clearing low-battery armed state"
   fi
   save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$charge_now" "$current_timestamp" "$ac_online"
   exit 0
 fi
 
-if (( capacity > LOW_CAPACITY_PERCENT )); then
+if ((capacity > LOW_CAPACITY_PERCENT)); then
   emit_status "ok" "none" "$battery" "$ac_device:offline" "${capacity}%" "$status_log" "0" "$eta_to_shutdown" "above-threshold"
-  if (( ARMED == 1 )); then
+  if ((ARMED == 1)); then
     logger -t "$LOG_TAG" "Battery recovered above threshold (${capacity}% > ${LOW_CAPACITY_PERCENT}%); clearing armed state"
   fi
   save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$charge_now" "$current_timestamp" "$ac_online"
   exit 0
 fi
 
-if (( ARMED != 1 )); then
+if ((ARMED != 1)); then
   emit_status "warn" "arm" "$battery" "$ac_device:offline" "${capacity}%" "$status_log" "1" "$eta_to_shutdown" "first-low-sample"
   logger -t "$LOG_TAG" "Battery low and on battery power (${capacity}%, status=${status}); arming shutdown check"
   save_state "1" "$battery" "$ac_device" "$capacity" "$energy_now" "$charge_now" "$current_timestamp" "$ac_online"
   exit 0
 fi
 
-if (( capacity > LAST_CAPACITY )); then
+if ((capacity > LAST_CAPACITY)); then
   emit_status "ok" "clear-state" "$battery" "$ac_device:offline" "${capacity}%" "$status_log" "0" "$eta_to_shutdown" "capacity-increased"
   logger -t "$LOG_TAG" "Battery capacity increased (${LAST_CAPACITY}% -> ${capacity}%); clearing armed state"
   save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$charge_now" "$current_timestamp" "$ac_online"
   exit 0
 fi
 
-if [[ "$energy_now" =~ ^[0-9]+$ ]] && [[ "$LAST_ENERGY_NOW" =~ ^[0-9]+$ ]] && (( energy_now > LAST_ENERGY_NOW )); then
+if [[ "$energy_now" =~ ^[0-9]+$ ]] && [[ "$LAST_ENERGY_NOW" =~ ^[0-9]+$ ]] && ((energy_now > LAST_ENERGY_NOW)); then
   emit_status "ok" "clear-state" "$battery" "$ac_device:offline" "${capacity}%" "$status_log" "0" "$eta_to_shutdown" "energy-increased"
   logger -t "$LOG_TAG" "Battery energy increased (${LAST_ENERGY_NOW} -> ${energy_now}); clearing armed state"
   save_state "0" "$battery" "$ac_device" "$capacity" "$energy_now" "$charge_now" "$current_timestamp" "$ac_online"
@@ -468,51 +514,49 @@ fi
 
 shutdown -h now "Low battery on Proxmox host"
 EOF
-  chmod 0755 "$CHECK_PATH"
 }
 
 write_installed_script_copy() {
   local source_path=""
   source_path="$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true)"
   mkdir -p "$INSTALLER_STORE_DIR"
-  if [[ -n "$source_path" && -f "$source_path" ]]; then
-    cp "$source_path" "$INSTALLER_STORE_PATH"
-    chmod 0755 "$INSTALLER_STORE_PATH"
-  fi
+  cp "$source_path" "${staging_dir}/installer"
 }
 
 write_management_wrappers() {
-  cat <<EOF >"$MANAGER_PATH"
+  cat <<EOF >"${staging_dir}/manager"
 #!/usr/bin/env bash
 set -euo pipefail
 
 LOCAL_SCRIPT="${INSTALLER_STORE_PATH}"
-UPSTREAM_SCRIPT_URL="${UPSTREAM_SCRIPT_URL}"
+export PVE_BATTERY_SCRIPT_URL="${UPSTREAM_SCRIPT_URL}"
 
 if [[ -x "\$LOCAL_SCRIPT" ]]; then
   exec "\$LOCAL_SCRIPT" "\$@"
 fi
 
 if command -v curl >/dev/null 2>&1; then
-  exec bash -c "\$(curl -fsSL \"\$UPSTREAM_SCRIPT_URL\")" bash "\$@"
+  script_tmp="\$(mktemp)"
+  trap 'rm -f "\$script_tmp"' EXIT
+  curl -fsSL --connect-timeout 10 --max-time 60 "\$PVE_BATTERY_SCRIPT_URL" -o "\$script_tmp"
+  bash -n "\$script_tmp"
+  bash "\$script_tmp" "\$@"
+  exit \$?
 fi
 
 echo "No local management script found and curl is unavailable."
 exit 1
 EOF
-  chmod 0755 "$MANAGER_PATH"
 
-  cat <<EOF >"$UPDATE_WRAPPER_PATH"
+  cat <<EOF >"${staging_dir}/update"
 #!/usr/bin/env bash
 exec "${MANAGER_PATH}" update "\$@"
 EOF
-  chmod 0755 "$UPDATE_WRAPPER_PATH"
 
-  cat <<EOF >"$UNINSTALL_WRAPPER_PATH"
+  cat <<EOF >"${staging_dir}/uninstall"
 #!/usr/bin/env bash
 exec "${MANAGER_PATH}" remove "\$@"
 EOF
-  chmod 0755 "$UNINSTALL_WRAPPER_PATH"
 }
 
 write_units() {
@@ -520,12 +564,12 @@ write_units() {
   if [[ -f "$CONFIG_PATH" ]]; then
     # shellcheck disable=SC1090
     source "$CONFIG_PATH"
-    if [[ "${CHECK_INTERVAL_SECONDS:-}" =~ ^[0-9]+$ ]] && (( CHECK_INTERVAL_SECONDS > 0 )); then
+    if [[ "${CHECK_INTERVAL_SECONDS:-}" =~ ^[0-9]+$ ]] && ((CHECK_INTERVAL_SECONDS > 0)); then
       interval="$CHECK_INTERVAL_SECONDS"
     fi
   fi
 
-  cat <<EOF >"$SERVICE_PATH"
+  cat <<EOF >"${staging_dir}/pve-battery-monitor.service"
 [Unit]
 Description=Check Proxmox host battery level and shut down on persistent low battery
 After=multi-user.target
@@ -535,14 +579,13 @@ Type=simple
 ExecStart=${CHECK_PATH}
 EOF
 
-  cat <<EOF >"$TIMER_PATH"
+  cat <<EOF >"${staging_dir}/pve-battery-monitor.timer"
 [Unit]
 Description=Run Proxmox host battery monitor every minute
 
 [Timer]
 OnBootSec=${interval}s
 OnUnitActiveSec=${interval}s
-Persistent=true
 Unit=pve-battery-monitor.service
 
 [Install]
@@ -567,7 +610,7 @@ validate_environment() {
   fi
 
   pve_major="$(detect_pve_major)"
-  if [[ ! "$pve_major" =~ ^[0-9]+$ ]] || (( pve_major < 8 )); then
+  if [[ ! "$pve_major" =~ ^[0-9]+$ ]] || ((pve_major < 8)); then
     echo "Proxmox VE 8 or newer is required."
     exit 1
   fi
@@ -576,18 +619,59 @@ validate_environment() {
     echo "No battery device found under /sys/class/power_supply/BAT*."
     exit 1
   fi
+
+  local ac_device ac_online
+  ac_device="$(detect_ac_device || true)"
+  if [[ -z "$ac_device" ]] ||
+    ! ac_online="$(cat "/sys/class/power_supply/${ac_device}/online" 2>/dev/null)" ||
+    [[ ! "$ac_online" =~ ^[01]$ ]]; then
+    echo "No readable AC power indicator returning 0 or 1 was found."
+    echo "Set AC_DEVICE to the power-supply directory name in ${CONFIG_PATH}, then retry."
+    exit 1
+  fi
+}
+
+atomic_install_file() {
+  local source_file="$1" destination="$2" mode="$3" temporary_file
+  temporary_file="$(mktemp "$(dirname "$destination")/.pve-battery.XXXXXX")"
+  if ! install -m "$mode" "$source_file" "$temporary_file" ||
+    ! mv -f "$temporary_file" "$destination"; then
+    rm -f "$temporary_file"
+    return 1
+  fi
 }
 
 deploy_monitor() {
   local action_label="$1"
   local battery="$2"
   local ac_device="$3"
+  local staging_dir script
+
+  staging_dir="$(mktemp -d)"
+  trap 'rm -rf "$staging_dir"' EXIT
 
   write_config
   write_installed_script_copy
   write_management_wrappers
   write_check_script
   write_units
+
+  for script in installer check manager update uninstall; do
+    bash -n "${staging_dir}/${script}"
+  done
+  if [[ -f "${staging_dir}/config" ]]; then
+    bash -n "${staging_dir}/config"
+    atomic_install_file "${staging_dir}/config" "$CONFIG_PATH" 0644
+  fi
+  atomic_install_file "${staging_dir}/installer" "$INSTALLER_STORE_PATH" 0755
+  atomic_install_file "${staging_dir}/check" "$CHECK_PATH" 0755
+  atomic_install_file "${staging_dir}/manager" "$MANAGER_PATH" 0755
+  atomic_install_file "${staging_dir}/update" "$UPDATE_WRAPPER_PATH" 0755
+  atomic_install_file "${staging_dir}/uninstall" "$UNINSTALL_WRAPPER_PATH" 0755
+  atomic_install_file "${staging_dir}/pve-battery-monitor.service" "$SERVICE_PATH" 0644
+  atomic_install_file "${staging_dir}/pve-battery-monitor.timer" "$TIMER_PATH" 0644
+  rm -rf "$staging_dir"
+  trap - EXIT
 
   systemctl daemon-reload
   systemctl enable -q --now pve-battery-monitor.timer
@@ -617,6 +701,17 @@ install_monitor() {
 
 update_monitor() {
   local battery ac_device
+  if [[ "${PVE_BATTERY_UPDATE_LOCAL:-0}" != "1" ]]; then
+    local update_tmp
+    update_tmp="$(mktemp)"
+    trap 'rm -f "$update_tmp"' EXIT
+    curl -fsSL --connect-timeout 10 --max-time 60 "$UPSTREAM_SCRIPT_URL" -o "$update_tmp"
+    bash -n "$update_tmp"
+    PVE_BATTERY_SCRIPT_URL="$UPSTREAM_SCRIPT_URL" PVE_BATTERY_UPDATE_LOCAL=1 bash "$update_tmp" update
+    rm -f "$update_tmp"
+    trap - EXIT
+    return 0
+  fi
   validate_environment
   battery="$(detect_battery || true)"
   ac_device="$(detect_ac_device || true)"
@@ -675,7 +770,7 @@ choose_action() {
     return 0
   fi
 
-  printf 'Select an option [Install/Update/Remove/Status]: '
+  printf 'Select an option [Install/Update/Remove/Status]: ' >&2
   read -r answer
   printf '%s\n' "$answer"
 }
@@ -683,10 +778,10 @@ choose_action() {
 main() {
   local action
   case "${1:-}" in
-    install|Install) action="Install" ;;
-    update|Update) action="Update" ;;
-    remove|Remove|uninstall|Uninstall) action="Remove" ;;
-    status|Status) action="Status" ;;
+    install | Install) action="Install" ;;
+    update | Update) action="Update" ;;
+    remove | Remove | uninstall | Uninstall) action="Remove" ;;
+    status | Status) action="Status" ;;
     "") action="$(choose_action)" ;;
     *)
       echo "Usage: $0 [install|update|remove|status]"
@@ -698,7 +793,10 @@ main() {
     Update) update_monitor ;;
     Remove) remove_monitor ;;
     Status) status_monitor ;;
-    *) echo "Exiting."; exit 0 ;;
+    *)
+      echo "Exiting."
+      exit 0
+      ;;
   esac
 }
 

@@ -5,7 +5,7 @@ Implement this as a host-side Proxmox tool, not a container/addon script.
 
 Primary implementation:
 - Add `tools/pve/laptop-battery-shutdown.sh` as the upstream-style interactive installer/remover/updater.
-- Add `frontend/public/json/laptop-battery-shutdown.json` with `type: "pve"` so it fits the Community Scripts catalog.
+- Add `json/laptop-battery-shutdown.json` with `type: "pve"` so it fits the Community Scripts catalog.
 - Generate host files at install time:
   - `/usr/local/bin/pve-battery-monitor-check`
   - `/usr/local/bin/pve-battery-monitor-manage`
@@ -78,12 +78,12 @@ Check algorithm:
 
 Systemd units:
 - `pve-battery-monitor.service`: simple service running `/usr/local/bin/pve-battery-monitor-check`
-- `pve-battery-monitor.timer`: `OnBootSec=60s`, `OnUnitActiveSec=60s`, `Persistent=true`
-- `Remove` disables/removes units, helper, config, and state file.
+- `pve-battery-monitor.timer`: `OnBootSec=60s`, `OnUnitActiveSec=60s`
+- `Remove` disables/removes units, helpers, and state files. The configuration is retained.
 
 Public interfaces and defaults:
 - User-facing entrypoint: `tools/pve/laptop-battery-shutdown.sh`
-- Catalog metadata: `frontend/public/json/laptop-battery-shutdown.json`
+- Catalog metadata: `json/laptop-battery-shutdown.json`
 - Host admin interface: `/etc/default/pve-battery-monitor`
 - Installed management entrypoint: `/usr/local/bin/pve-battery-monitor-manage`
 - Test interface: `DRY_RUN=1` prevents actual shutdown and logs the command instead
@@ -117,10 +117,10 @@ Behavior scenarios:
 - The repository default can remain `10%`, but operator documentation should clearly recommend validating battery health and raising the live threshold on aging hardware.
 
 ## Next Steps
-1. Move these files into an actual `community-scripts/ProxmoxVE` fork, include user-facing documentation (`README.md` or equivalent), and test there with the normal curl entrypoint.
+1. Move these files into an actual `community-scripts/DevScripts` fork, include user-facing documentation (`README.md` or equivalent), and test there with the normal curl entrypoint.
    Documentation should explain:
    - `10%` may be acceptable for a new battery in good health
-   - `25%` is safer for weaker batteries like this laptop
+   - `25%` is safer for older or unstable batteries
    - BIOS/UEFI auto-start on AC restore and scheduled power-on tips
 
 ## Operational Tips
@@ -134,4 +134,14 @@ Behavior scenarios:
 - Documentation should note that exact firmware option names vary by laptop vendor and model.
 
 ## Future Features
-- Low priority: consider a separate Proxmox battery UI companion page with graphing and ETA, documented in [FUTURE_FEATURE_BATTERY_UI.md](/root/projects/labtools/proxmox-laptop-poweroff-lowbattery/FUTURE_FEATURE_BATTERY_UI.md). Keep this out of the built-in Proxmox Summary page unless Proxmox adds a supported web UI extension model.
+- Low priority: consider a separate Proxmox battery UI companion page with graphing and ETA, documented in [FUTURE_FEATURE_BATTERY_UI.md](FUTURE_FEATURE_BATTERY_UI.md). Keep this out of the built-in Proxmox Summary page unless Proxmox adds a supported web UI extension model.
+
+## Contribution Preparation
+- Author attribution is `Christian Sandberg (chrsandb)`, with an MIT license in `LICENSE`.
+- Installation requires a readable AC indicator returning `0` or `1`, with `AC_DEVICE` configuration guidance on failure.
+- Generated scripts are staged and syntax-checked before per-file atomic replacement. Downloads and telemetry have time limits.
+- New scripts enter through DevScripts, with metadata in `json/` for its PocketBase workflow.
+- The installer supports curl/bash launches and downloads updates from `PVE_BATTERY_SCRIPT_URL`, defaulting to this project's published script.
+- Confirmation requires samples from the same boot and devices, no more than three check intervals apart.
+- Run `python3 -m unittest discover -s tests -v`, ShellCheck, shfmt, Bash syntax checks, and JSON validation before submission.
+- Prepare a DevScripts PR after published-entrypoint testing and clarification of host-utility eligibility with maintainers.

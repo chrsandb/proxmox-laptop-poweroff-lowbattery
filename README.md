@@ -3,6 +3,8 @@
 Host-side battery monitoring for Proxmox VE running on laptop hardware.
 
 ## Run on Proxmox VE
+Installation requires Proxmox VE 8 or newer, a detected battery, and a readable AC power indicator containing `0` or `1`. If AC detection fails, configure `AC_DEVICE` in `/etc/default/pve-battery-monitor` and retry.
+
 Run the installer directly on the Proxmox host shell:
 
 ```bash
@@ -45,6 +47,25 @@ CHECK_INTERVAL_SECONDS=60
 DRY_RUN=0
 ```
 
+## Management
+Run the installed commands as root.
+
+```bash
+pve-battery-monitor-manage status
+update_pve_battery_monitor
+uninstall_pve_battery_monitor
+```
+
+Updates download the latest installer and preserve existing configuration. Removal retains `/etc/default/pve-battery-monitor`.
+
+Generated scripts are syntax-checked before deployment. Each installed file is replaced atomically. Downloads have bounded connection and transfer times.
+
+For fork testing, export `PVE_BATTERY_SCRIPT_URL` with the raw script URL before launching the installer. The installed manager retains that URL for updates.
+
+Set `DRY_RUN=1` before testing shutdown behavior. After changing `CHECK_INTERVAL_SECONDS`, rerun the installer to regenerate the timer.
+
+Shutdown confirmation resets after reboot, a device change, or a gap longer than three check intervals.
+
 ## Threshold Guidance
 - `10%` can be acceptable for a new battery in good health with predictable discharge behavior.
 - `25%` is safer for older batteries or batteries with unstable low-end reporting.
@@ -80,3 +101,6 @@ Common firmware option names:
 - `AC Power Recovery`
 
 Scheduled power-on is useful when the battery is weak and the laptop may need extra charging time before it can boot reliably.
+
+## License
+Copyright (c) 2026 Christian Sandberg. Distributed under the [MIT License](LICENSE).

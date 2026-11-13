@@ -16,30 +16,18 @@ This repository contains a host-side Proxmox VE battery shutdown tool intended f
 - Prefer non-interactive `gh` commands where possible.
 
 ## Upstream Submission Workflow
-- The intended upstream target is `community-scripts/ProxmoxVE`.
-- Submit this project as a `tools/pve` contribution, not as a `ct/` container script or a Proxmox UI/plugin change.
-- The expected upstream file pair is:
-  - `tools/pve/laptop-battery-shutdown.sh`
-  - `frontend/public/json/laptop-battery-shutdown.json`
-- Before preparing an upstream PR, check the current upstream guidance:
-  - `docs/contribution/README.md`
-  - `docs/tools/README.md`
-  - one or more current `tools/pve/*.sh` examples
-  - one or more current `frontend/public/json/*.json` entries with `\"type\": \"pve\"`
-- Prefer this workflow for upstream contribution:
-  - `gh repo fork community-scripts/ProxmoxVE`
-  - clone the fork locally
-  - run `bash docs/contribution/setup-fork.sh --full`
-  - create a feature branch
-  - copy in the tool script and matching JSON metadata
-  - test from the fork, including the raw GitHub delivery path if relevant
-  - open the PR with `gh pr create`
-- Keep the contribution aligned with existing `tools/pve` conventions:
-  - `#!/usr/bin/env bash`
-  - host-side Proxmox tool behavior
-  - minimal, catalog-friendly JSON metadata
-  - no assumptions that this belongs in `/ct`, `/install`, or Proxmox web UI code
-- Treat `documentation` and `website` fields in JSON as review-sensitive. Upstream may prefer links that fit their ecosystem better than a standalone repo homepage.
+- Submit new scripts to `community-scripts/DevScripts` for testing and review. Maintainers handle promotion to ProxmoxVE.
+- Use `tools/pve/laptop-battery-shutdown.sh` and `json/laptop-battery-shutdown.json` for this host utility.
+- Recheck the current upstream guidance before preparing a PR.
+- Read [ProxmoxVE CONTRIBUTING.md](https://github.com/community-scripts/ProxmoxVE/blob/main/CONTRIBUTING.md), [DevScripts AGENTS.md](https://github.com/community-scripts/DevScripts/blob/main/AGENTS.md), its script-creator agent guidance, and the DevScripts PR template.
+- Use `gh repo fork community-scripts/DevScripts`, create a feature branch in a separate checkout, and submit with `gh pr create`.
+- Follow current `tools/pve` examples and the applicable host-tool guidance.
+- DevScripts metadata belongs in `json/`. Put `config_path` inside the install method and include `repository`, `architectures`, and `platforms`.
+- ProxmoxVE website metadata is managed through PocketBase and the website.
+- Test the published entrypoint, install, update, status, removal, and battery decision logic before submission.
+- Set `PVE_BATTERY_SCRIPT_URL` to the fork's raw script URL during fork testing. This URL is preserved by the installed manager for subsequent updates.
+- Fill in the current PR template, including PVE Tool, actual platforms tested, and accurate AI-assistance details.
+- The current new-script PR validation enforces the application eligibility checkboxes when New script is selected, including age, stars, and release tarballs. Document this host utility honestly and request maintainer guidance on the applicable criteria.
 
 ## Sensitive Data Policy
 Never commit any of the following:
